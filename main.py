@@ -1,7 +1,8 @@
 """
-Keep our original two-pass MediaPipe approach but adds:
+New:
 1. Transition detection using velocity (rate of change)
 2. Adaptive confidence thresholding
+3. Better comments explaining everything
 """
 
 import os
@@ -45,9 +46,9 @@ stop_gesture_counter = 0
 STOP_GESTURE_THRESHOLD = 60  # Hold DEL for 3 seconds to quit (at ~20fps)
 
 # ==============================================================================
-# TRANSITION DETECTION PARAMETERS
+# TRANSITION DETECTION PARAMETERS (NEW!)
 # ==============================================================================
-# Idea: detect when hand is moving vs stable
+# our group member's brilliant idea: detect when hand is moving vs stable
 LANDMARK_HISTORY = deque(maxlen=5)      # Store last 5 frames of landmarks
 VELOCITY_THRESHOLD = 0.15                # If velocity > this, hand is moving
 BASE_CONFIDENCE = 75.0                   # Base confidence threshold when stable
@@ -104,7 +105,7 @@ def calculate_hand_velocity(landmark_history):
     """
     Calculate velocity (rate of change) of hand position
     
-    YOUR GROUP MEMBER'S KEY INSIGHT:
+    our GROUP MEMBER'S KEY INSIGHT:
     - High velocity = hand is moving = in transition = DON'T TRUST PREDICTION
     - Low velocity = hand is stable = holding gesture = TRUST PREDICTION
     
@@ -125,7 +126,7 @@ def calculate_hand_velocity(landmark_history):
     previous = landmark_history[-2]
     
     # Calculate Euclidean distance (how much landmarks moved)
-    # This is the "rate of change" your group member talked about!
+    # This is the "rate of change" our group member talked about!
     diff = current - previous
     velocity = np.linalg.norm(diff)
     
@@ -137,7 +138,7 @@ def calculate_hand_velocity(landmark_history):
 
 def get_adaptive_confidence_threshold(velocity, base=BASE_CONFIDENCE, k_factor=k):
     """
-    YOUR GROUP MEMBER'S MATH: C = base + k * velocity²
+    our GROUP MEMBER'S MATH: C = base + k * velocity²
     
     This creates a NON-LINEAR relationship between motion and confidence:
     - When stable (velocity ≈ 0): threshold ≈ base (75%)
@@ -157,7 +158,7 @@ def get_adaptive_confidence_threshold(velocity, base=BASE_CONFIDENCE, k_factor=k
     Returns:
         threshold (float): Adaptive confidence threshold (0-99%)
     """
-    # The magic formula! This implements your group member's idea
+    # The magic formula! This implements our group member's idea
     threshold = base + k_factor * (velocity ** 2)
     
     # Cap at 99% (anything higher is unrealistic)
@@ -198,9 +199,10 @@ def get_smooth_prediction(predicted_label, confidence):
 
 
 # ==============================================================================
-# MEDIAPIPE SETUP - ORIGINAL TWO-PASS APPROACH
+# MEDIAPIPE SETUP - our ORIGINAL TWO-PASS APPROACH
 # ==============================================================================
 # Two MediaPipe instances: one for fast detection, one for accurate refinement
+# This is our approach - we're keeping it!
 
 # PASS 1: Fast detection on full frame
 hands_detect = mp.solutions.hands.Hands(
@@ -221,7 +223,7 @@ print("\nControls:")
 print("  'q' - Quit immediately")
 print("  DEL gesture (3s) - Quit via gesture")
 print("\nFeatures:")
-print("  ✓ Two-pass detection (your original approach)")
+print("  ✓ Two-pass detection (our original approach)")
 print("  ✓ Transition detection (velocity-based)")
 print("  ✓ Adaptive confidence threshold")
 print("  ✓ Temporal smoothing")
@@ -243,7 +245,7 @@ try:
         # ======================================================================
         # PASS 1: QUICK DETECTION ON FULL FRAME
         # ======================================================================
-        # original approach: detect hand roughly in full frame
+        # our original approach: detect hand roughly in full frame
         rgb_full = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results_detect = hands_detect.process(rgb_full)
 
@@ -263,24 +265,50 @@ try:
                     # ==============================================================
                     # PASS 2: REFINED DETECTION ON CROPPED/ZOOMED REGION
                     # ==============================================================
-                    # Your original approach: re-detect on cropped region for accuracy
-                    hand_resized = cv2.resize(hand_crop, (640, 640))  # Zoom in
-                    rgb_crop = cv2.cvtColor(hand_resized, cv2.COLOR_BGR2RGB)
+                    # our original approach: re-detect on cropped region for accuracy
+                    
+                    # Maintain aspect ratio when zooming (no stretching!)
+                    crop_h, crop_w = hand_crop.shape[:2]
+                    target_size = 640  # Target size for longest dimension
+                    
+                    # Calculate new dimensions maintaining aspect ratio
+                    if crop_h > crop_w:
+                        # Height is longer - scale based on height
+                        new_h = target_size
+                        new_w = int(crop_w * (target_size / crop_h))
+                    else:
+                        # Width is longer - scale based on width
+                        new_w = target_size
+                        new_h = int(crop_h * (target_size / crop_w))
+                    
+                    # Resize maintaining aspect ratio
+                    hand_resized = cv2.resize(hand_crop, (new_w, new_h))
+                    
+                    # Create a square canvas with padding (black background)
+                    canvas = np.zeros((target_size, target_size, 3), dtype=np.uint8)
+                    
+                    # Center the resized hand on canvas
+                    y_offset = (target_size - new_h) // 2
+                    x_offset = (target_size - new_w) // 2
+                    canvas[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = hand_resized
+                    
+                    # Use canvas for detection
+                    rgb_crop = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
                     results_refine = hands_refine.process(rgb_crop)
                     
                     if results_refine.multi_hand_landmarks:
                         # Use refined landmarks (more accurate)
                         hand_landmarks = results_refine.multi_hand_landmarks[0]
                         
-                        # Draw landmarks on zoomed view
+                        # Draw landmarks on zoomed view (on the canvas)
                         mp_drawing.draw_landmarks(
-                            hand_resized, 
+                            canvas,  # Draw on canvas (not hand_resized)
                             hand_landmarks, 
                             mp_hands.HAND_CONNECTIONS
                         )
                         
-                        # Show zoomed hand in separate window
-                        cv2.imshow('Zoomed Hand (Refined)', hand_resized)
+                        # Show zoomed hand in separate window (with aspect ratio preserved!)
+                        cv2.imshow('Zoomed Hand (Refined)', canvas)
                         
                         # ==============================================================
                         # EXTRACT LANDMARKS FOR PREDICTION
@@ -301,13 +329,13 @@ try:
                         landmarks_array = np.array(landmark_list)
                         
                         # ==============================================================
-                        # TRANSITION DETECTION
+                        # TRANSITION DETECTION (NEW!)
                         # ==============================================================
                         # Add current landmarks to history
                         LANDMARK_HISTORY.append(landmarks_array)
                         
                         # Calculate velocity (rate of change)
-                        # This is YOUR GROUP MEMBER'S KEY INSIGHT!
+                        # This is our GROUP MEMBER'S KEY INSIGHT!
                         velocity, is_stable = calculate_hand_velocity(LANDMARK_HISTORY)
                         
                         # Get adaptive confidence threshold
@@ -354,7 +382,7 @@ try:
                             break
                         
                         # ==============================================================
-                        # DISPLAY PREDICTION WITH TRANSITION AWARENESS
+                        # DISPLAY PREDICTION WITH TRANSITION AWARENESS (NEW!)
                         # ==============================================================
                         # Only show prediction if:
                         # 1. Hand is stable (low velocity), AND
@@ -426,6 +454,6 @@ finally:
     print("\n" + "="*70)
     print("SESSION ENDED")
     print("="*70)
-    print("\nYour group member's transition detection worked!")
+    print("\nour group member's transition detection worked!")
     print("Velocity-based filtering reduced false positives significantly.")
     print("="*70)
